@@ -7,6 +7,7 @@ from app.main import app  # noqa: E402
 
 
 def test_generate_validation_rejects_empty_prompt():
+    """Verify whitespace-only prompts are rejected by request validation."""
     with TestClient(app) as client:
         response = client.post(
             "/v1/generate",
