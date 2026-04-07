@@ -285,6 +285,80 @@ docker compose up --build
 
 To use Gemini in Docker, set `GEMINI_API_KEY` in `.env`. To use Ollama, set `OLLAMA_BASE_URL`.
 
+## Deploy on Render
+
+Render docs and pricing:
+- https://render.com/pricing
+- https://render.com/docs/blueprint-spec
+- https://render.com/docs/scaling
+
+This repo includes [render.yaml](D:/Text-2-Text/Text-2-Text/render.yaml) for a non-Docker Python web service on Render.
+
+The current Blueprint is configured for:
+- `runtime: python`
+- `plan: starter`
+- `numInstances: 2`
+- `WEB_CONCURRENCY=2`
+
+That means:
+- Render runs 2 service instances
+- each instance runs 2 Uvicorn workers
+- Render handles the load balancer in front of those instances
+
+Use Gemini only on Render for this app:
+- set `GEMINI_API_KEY`
+- leave `OLLAMA_BASE_URL` unset
+
+### Deploy with `render.yaml`
+
+1. Push this repo to GitHub.
+2. In Render, choose `New +` -> `Blueprint`.
+3. Connect your GitHub repo.
+4. Render will detect `render.yaml`.
+5. Add `GEMINI_API_KEY` when prompted.
+6. Deploy.
+
+The service starts with:
+
+```bash
+python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers $WEB_CONCURRENCY
+```
+
+### Manual Render setup
+
+Use these values in the Render dashboard:
+
+- Environment: `Python`
+- Plan: `Starter` or higher
+- Instance Count: `2`
+- Build Command: `pip install -r requirements.txt`
+- Start Command: `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers $WEB_CONCURRENCY`
+
+Set these environment variables:
+
+```env
+APP_ENV=production
+APP_HOST=0.0.0.0
+WEB_CONCURRENCY=2
+GEMINI_API_KEY=your_real_key
+GEMINI_DEFAULT_MODEL=gemini-2.5-flash
+REQUEST_TIMEOUT_SECONDS=30
+MAX_CONCURRENT_PROVIDER_CALLS=10
+GEMINI_MAX_RETRIES=2
+GEMINI_RETRY_BASE_DELAY_SECONDS=0.5
+```
+
+### Notes
+
+- Multi-instance load balancing is not available on Render free web services.
+- Render handles load balancing automatically once the service has more than one instance.
+- Your public API URL will look like `https://your-service-name.onrender.com`.
+- Verify deployment with:
+
+```bash
+curl https://your-service-name.onrender.com/health
+```
+
 ## Multi-instance load balancing
 
 ```bash
