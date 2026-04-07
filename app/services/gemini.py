@@ -10,7 +10,7 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.config import Settings
-from app.schemas import BaseGemmaRequest, ImageToTextRequest, TextToTextRequest
+from app.schemas import BaseGemmaRequest, GenerateRequest, ImageToTextRequest, TextToTextRequest
 from app.services.model_router import ModelRouter
 
 
