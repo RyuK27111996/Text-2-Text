@@ -15,18 +15,24 @@ from app.schemas import GenerateRequest
 
 @dataclass(slots=True)
 class OllamaResult:
+    """Normalized result returned from an Ollama generation request."""
+
     model: str
     text: str
     provider_latency_ms: float
 
 
 class OllamaService:
+    """Wrapper around the Ollama generate endpoint."""
+
     def __init__(self, settings: Settings, client: httpx.AsyncClient, semaphore: asyncio.Semaphore) -> None:
+        """Store shared dependencies used to call Ollama."""
         self.settings = settings
         self.client = client
         self.semaphore = semaphore
 
     async def generate(self, payload: GenerateRequest) -> OllamaResult:
+        """Generate text through Ollama and normalize streaming or non-streaming responses."""
         model = payload.model or self.settings.ollama_default_model
         max_output_tokens = payload.max_output_tokens or self.settings.default_max_output_tokens
         max_output_tokens = min(max_output_tokens, self.settings.max_output_tokens_limit)
@@ -116,6 +122,7 @@ class OllamaService:
 
         # If we parsed a normal JSON object, try to extract text from common keys
         def _extract_from_obj(obj: Any) -> str | None:
+            """Recursively extract text from nested Ollama response objects."""
             if isinstance(obj, str):
                 return obj
             if isinstance(obj, dict):

@@ -27,14 +27,43 @@ logger = logging.getLogger("app")
 
 
 class RequestLoggerAdapter(logging.LoggerAdapter):
+    """Inject the current request id into structured log records."""
+
     def process(self, msg, kwargs):
+        """Populate the `request_id` logging field when absent."""
         extra = kwargs.setdefault("extra", {})
         extra.setdefault("request_id", self.extra.get("request_id", "-"))
         return msg, kwargs
 
 
+def get_active_backend(settings) -> str:
+    """Return the configured provider name for the current settings."""
+    return "ollama" if getattr(settings, "ollama_base_url", None) else "gemini"
+
+
+def build_generation_service(request: Request):
+    """Instantiate the provider service selected for the incoming request."""
+    settings = request.app.state.settings
+
+    if get_active_backend(settings) == "ollama":
+        if OllamaService is None:
+            raise HTTPException(status_code=500, detail="OllamaService not available")
+        return OllamaService(
+            settings=settings,
+            client=request.app.state.http_client,
+            semaphore=request.app.state.provider_semaphore,
+        )
+
+    return GeminiService(
+        settings=settings,
+        client=request.app.state.http_client,
+        semaphore=request.app.state.provider_semaphore,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Create and clean up shared application resources."""
     settings = get_settings()
     timeout = httpx.Timeout(settings.request_timeout_seconds)
     limits = httpx.Limits(max_keepalive_connections=100, max_connections=200)
@@ -76,11 +105,13 @@ app.add_middleware(
 
 @app.get("/health")
 async def health(request: Request):
+    """Report service health and the currently selected backend."""
     settings = request.app.state.settings
     return {
         "status": "ok",
         "app": settings.app_name,
         "env": settings.app_env,
+        "active_backend": get_active_backend(settings),
         "gemini_configured": bool(settings.gemini_api_key),
         "max_concurrent_provider_calls": settings.max_concurrent_provider_calls,
     }
@@ -97,6 +128,7 @@ async def health(request: Request):
     },
 )
 async def generate(request: Request, payload: GenerateRequest):
+    """Validate a generation request, call the active provider, and normalize the response."""
     request_id = getattr(request.state, "request_id", "-")
     log = RequestLoggerAdapter(logger, {"request_id": request_id})
     settings = request.app.state.settings
@@ -107,21 +139,7 @@ async def generate(request: Request, payload: GenerateRequest):
             detail=f"prompt exceeds max allowed characters ({settings.max_input_chars})",
         )
 
-    # choose service: Ollama (local) if configured, else Gemini
-    if getattr(settings, "ollama_base_url", None):
-        if OllamaService is None:
-            raise HTTPException(status_code=500, detail="OllamaService not available")
-        service = OllamaService(
-            settings=settings,
-            client=request.app.state.http_client,
-            semaphore=request.app.state.provider_semaphore,
-        )
-    else:
-        service = GeminiService(
-            settings=settings,
-            client=request.app.state.http_client,
-            semaphore=request.app.state.provider_semaphore,
-        )
+    service = build_generation_service(request)
 
     total_started = time.perf_counter()
     log.info("Incoming generation request")
