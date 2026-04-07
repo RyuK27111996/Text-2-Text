@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application configuration loaded from environment variables and `.env`."""
 
-    app_name: str = "fastapi-gemini-async-api"
+    app_name: str = "fastapi-gemma-api"
     app_env: str = "dev"
     app_host: str = "0.0.0.0"
     app_port: int = 8000
@@ -15,12 +15,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com"
     gemini_api_version: str = "v1beta"
-    gemini_default_model: str = "gemini-2.5-flash"
-
-    # Ollama (local) settings. Keep disabled by default so Gemini can be used
-    # when only GEMINI_API_KEY is configured.
-    ollama_base_url: str | None = None
-    ollama_default_model: str = "gemma3"
+    gemini_default_model: str = "gemma-3-27b-it"
 
     request_timeout_seconds: float = 30.0
     max_input_chars: int = 16000

@@ -11,12 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.middleware.request_id import RequestContextMiddleware
-from app.schemas import ErrorResponse, GenerateRequest, GenerateResponse
+from app.schemas import ErrorResponse, GenerateResponse, ImageToTextRequest, TextToTextRequest
 from app.services.gemini import GeminiService
-try:
-    from app.services.ollama import OllamaService
-except Exception:  # pragma: no cover - optional dependency
-    OllamaService = None
+from app.services.model_router import build_default_model_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,28 +33,19 @@ class RequestLoggerAdapter(logging.LoggerAdapter):
         return msg, kwargs
 
 
-def get_active_backend(settings) -> str:
-    """Return the configured provider name for the current settings."""
-    return "ollama" if getattr(settings, "ollama_base_url", None) else "gemini"
+def get_active_backend() -> str:
+    """Return the single provider name exposed by this application."""
+    return "gemma"
 
 
 def build_generation_service(request: Request):
-    """Instantiate the provider service selected for the incoming request."""
+    """Instantiate the Gemma service used for incoming requests."""
     settings = request.app.state.settings
-
-    if get_active_backend(settings) == "ollama":
-        if OllamaService is None:
-            raise HTTPException(status_code=500, detail="OllamaService not available")
-        return OllamaService(
-            settings=settings,
-            client=request.app.state.http_client,
-            semaphore=request.app.state.provider_semaphore,
-        )
-
     return GeminiService(
         settings=settings,
         client=request.app.state.http_client,
         semaphore=request.app.state.provider_semaphore,
+        model_router=request.app.state.model_router,
     )
 
 
@@ -71,6 +59,7 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.http_client = httpx.AsyncClient(timeout=timeout, limits=limits)
     app.state.provider_semaphore = asyncio.Semaphore(settings.max_concurrent_provider_calls)
+    app.state.model_router = build_default_model_router()
 
     logger.info(
         "Application startup complete",
@@ -87,7 +76,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="FastAPI Gemini Async API",
+    title="FastAPI Gemma Async API",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -111,14 +100,14 @@ async def health(request: Request):
         "status": "ok",
         "app": settings.app_name,
         "env": settings.app_env,
-        "active_backend": get_active_backend(settings),
+        "active_backend": get_active_backend(),
         "gemini_configured": bool(settings.gemini_api_key),
         "max_concurrent_provider_calls": settings.max_concurrent_provider_calls,
     }
 
 
 @app.post(
-    "/v1/generate",
+    "/v1/text-to-text",
     response_model=GenerateResponse,
     responses={
         429: {"model": ErrorResponse},
@@ -127,8 +116,8 @@ async def health(request: Request):
         504: {"model": ErrorResponse},
     },
 )
-async def generate(request: Request, payload: GenerateRequest):
-    """Validate a generation request, call the active provider, and normalize the response."""
+async def text_to_text(request: Request, payload: TextToTextRequest):
+    """Validate a text prompt, call the active provider, and normalize the response."""
     request_id = getattr(request.state, "request_id", "-")
     log = RequestLoggerAdapter(logger, {"request_id": request_id})
     settings = request.app.state.settings
@@ -142,10 +131,10 @@ async def generate(request: Request, payload: GenerateRequest):
     service = build_generation_service(request)
 
     total_started = time.perf_counter()
-    log.info("Incoming generation request")
-    result = await service.generate(payload)
+    log.info("Incoming text-to-text request")
+    result = await service.generate_text(payload)
     total_latency_ms = (time.perf_counter() - total_started) * 1000.0
-    log.info("Generation request completed")
+    log.info("Text-to-text request completed")
 
     return GenerateResponse(
         request_id=request_id,
@@ -154,3 +143,45 @@ async def generate(request: Request, payload: GenerateRequest):
         provider_latency_ms=round(result.provider_latency_ms, 2),
         total_latency_ms=round(total_latency_ms, 2),
     )
+
+
+@app.post(
+    "/v1/image-to-text",
+    response_model=GenerateResponse,
+    responses={
+        429: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        504: {"model": ErrorResponse},
+    },
+)
+async def image_to_text(request: Request, payload: ImageToTextRequest):
+    """Validate an image-to-text request, call the active provider, and normalize the response."""
+    request_id = getattr(request.state, "request_id", "-")
+    log = RequestLoggerAdapter(logger, {"request_id": request_id})
+
+    service = build_generation_service(request)
+
+    total_started = time.perf_counter()
+    log.info("Incoming image-to-text request")
+    result = await service.generate_image_to_text(payload)
+    total_latency_ms = (time.perf_counter() - total_started) * 1000.0
+    log.info("Image-to-text request completed")
+
+    return GenerateResponse(
+        request_id=request_id,
+        model=result.model,
+        output_text=result.text,
+        provider_latency_ms=round(result.provider_latency_ms, 2),
+        total_latency_ms=round(total_latency_ms, 2),
+    )
+
+
+@app.post(
+    "/v1/generate",
+    response_model=GenerateResponse,
+    include_in_schema=False,
+)
+async def generate(request: Request, payload: TextToTextRequest):
+    """Backward-compatible alias for the text-to-text endpoint."""
+    return await text_to_text(request, payload)

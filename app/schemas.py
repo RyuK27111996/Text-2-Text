@@ -2,8 +2,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-class GenerateRequest(BaseModel):
-    """Request body for text generation across supported providers."""
+class BaseGemmaRequest(BaseModel):
+    """Shared request options for Gemma-backed generation endpoints."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -15,7 +15,11 @@ class GenerateRequest(BaseModel):
     )
     model: str | None = Field(
         default=None,
-        description="Gemini model name. Defaults to GEMINI_DEFAULT_MODEL.",
+        description="Gemma model name. When omitted, the router picks the best available model.",
+    )
+    allow_model_fallback: bool = Field(
+        default=True,
+        description="Whether the wrapper may fail over to the next compatible Gemma model on transient errors.",
     )
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     max_output_tokens: int | None = Field(default=None, ge=1, le=2048)
@@ -61,6 +65,45 @@ class GenerateRequest(BaseModel):
         if self.response_json_schema is not None and self.response_mime_type != "application/json":
             raise ValueError("response_json_schema requires response_mime_type='application/json'")
         return self
+
+
+class TextToTextRequest(BaseGemmaRequest):
+    """Request body for Gemma text-to-text generation."""
+
+    routing_profile: Literal["auto", "text_fast", "text_quality", "cheap_text"] = Field(
+        default="auto",
+        description="Fallback pool used when the wrapper selects Gemma text models automatically.",
+    )
+
+
+class ImageToTextRequest(BaseGemmaRequest):
+    """Request body for Gemma image-to-text generation."""
+
+    routing_profile: Literal["auto", "vision_text"] = Field(
+        default="auto",
+        description="Fallback pool used when the wrapper selects Gemma vision models automatically.",
+    )
+    image_base64: str = Field(
+        ...,
+        min_length=1,
+        description="Base64-encoded image bytes sent to the model as inline data.",
+    )
+    image_mime_type: Literal["image/png", "image/jpeg", "image/webp"] = Field(
+        default="image/png",
+        description="MIME type for the base64-encoded image payload.",
+    )
+
+    @field_validator("image_base64")
+    @classmethod
+    def validate_image_base64(cls, value: str) -> str:
+        """Strip and reject empty base64 payloads."""
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("image_base64 cannot be empty or whitespace only")
+        return cleaned
+
+
+GenerateRequest = TextToTextRequest
 
 
 class GenerateResponse(BaseModel):

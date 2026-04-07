@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     # GEMINI (Cloud) - requires API key
     gemini_api_key: str | None = None                    # Must set in .env
     gemini_base_url: str = "https://generativelanguage.googleapis.com"
-    gemini_default_model: str = "gemini-2.5-flash"
+    gemini_default_model: str = "gemma-3-27b-it"
     
     # OLLAMA (Local) - free, runs locally
     ollama_base_url: str = "http://localhost:11434"      # Default: local
@@ -183,7 +183,7 @@ class GeminiService:
         
         # 4. Build endpoint URL
         endpoint = f"{base_url}/{api_version}/models/{model}:generateContent"
-        # Example: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+        # Example: https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent
         
         # 5. Acquire semaphore slot (wait if 10 requests already in-flight)
         async with self.semaphore:

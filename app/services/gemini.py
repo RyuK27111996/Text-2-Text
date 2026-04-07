@@ -10,7 +10,8 @@ import httpx
 from fastapi import HTTPException, status
 
 from app.config import Settings
-from app.schemas import GenerateRequest
+from app.schemas import BaseGemmaRequest, ImageToTextRequest, TextToTextRequest
+from app.services.model_router import ModelRouter
 
 
 @dataclass(slots=True)
@@ -25,53 +26,120 @@ class GeminiResult:
 class GeminiService:
     """Wrapper around the Gemini `generateContent` API."""
 
-    def __init__(self, settings: Settings, client: httpx.AsyncClient, semaphore: asyncio.Semaphore) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        client: httpx.AsyncClient,
+        semaphore: asyncio.Semaphore,
+        model_router: ModelRouter,
+    ) -> None:
         """Store shared dependencies used to call Gemini."""
         self.settings = settings
         self.client = client
         self.semaphore = semaphore
+        self.model_router = model_router
 
-    async def generate(self, payload: GenerateRequest) -> GeminiResult:
-        """Generate text through Gemini and validate structured output when requested."""
+    async def generate_text(self, payload: TextToTextRequest) -> GeminiResult:
+        """Generate text from a text prompt using Gemma fallback pools."""
+        return await self._generate(payload, self._build_text_request_body)
+
+    async def generate_image_to_text(self, payload: ImageToTextRequest) -> GeminiResult:
+        """Generate text from an image and prompt using Gemma vision fallback pools."""
+        return await self._generate(payload, self._build_image_request_body)
+
+    async def generate(self, payload: TextToTextRequest) -> GeminiResult:
+        """Backward-compatible wrapper for text-to-text generation."""
+        return await self.generate_text(payload)
+
+    async def _generate(
+        self,
+        payload: BaseGemmaRequest,
+        body_builder,
+    ) -> GeminiResult:
+        """Generate text through Gemma and validate structured output when requested."""
         if not self.settings.gemini_api_key:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="GEMINI_API_KEY is not configured on the server.",
             )
 
-        model = self._resolve_model(payload)
-        body = self._build_request_body(payload)
-        endpoint = self._build_endpoint(model)
+        candidates = await self._get_routing_candidates(payload)
+        last_http_error: HTTPException | None = None
 
-        started = time.perf_counter()
-        async with self.semaphore:
-            response = await self._post_with_retries(endpoint=endpoint, body=body)
+        for model in candidates:
+            started = time.perf_counter()
+            await self.model_router.mark_in_flight(model, 1)
+            try:
+                body = body_builder(payload)
+                endpoint = self._build_endpoint(model)
+                async with self.semaphore:
+                    response = await self._post_with_retries(endpoint=endpoint, body=body)
+            finally:
+                await self.model_router.mark_in_flight(model, -1)
 
-        provider_latency_ms = (time.perf_counter() - started) * 1000.0
+            provider_latency_ms = (time.perf_counter() - started) * 1000.0
 
-        if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Gemini rate limit reached. Retry later.",
-            )
+            if response.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+                detail = self._extract_error_detail(response)
+                await self.model_router.mark_rate_limited(model, detail)
+                last_http_error = HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Gemini rate limit reached for {model}: {detail}",
+                )
+                if payload.allow_model_fallback:
+                    continue
+                raise last_http_error
 
-        if response.status_code >= 400:
-            detail = self._extract_error_detail(response)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Gemini upstream returned {response.status_code}: {detail}",
-            )
+            if response.status_code >= 400:
+                detail = self._extract_error_detail(response)
+                await self.model_router.mark_failure(model, detail)
+                last_http_error = HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Gemini upstream returned {response.status_code} for {model}: {detail}",
+                )
+                if payload.allow_model_fallback and response.status_code in {
+                    status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    status.HTTP_502_BAD_GATEWAY,
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    status.HTTP_504_GATEWAY_TIMEOUT,
+                }:
+                    continue
+                raise last_http_error
 
-        data = self._decode_json(response)
-        text = self._extract_text(data)
-        self._validate_structured_output(payload, text)
-        return GeminiResult(model=model, text=text, provider_latency_ms=provider_latency_ms)
+            data = self._decode_json(response)
+            text = self._extract_text(data)
+            self._validate_structured_output(payload, text)
+            await self.model_router.mark_success(model)
+            return GeminiResult(model=model, text=text, provider_latency_ms=provider_latency_ms)
 
-    def _resolve_model(self, payload: GenerateRequest) -> str:
+        if last_http_error is not None:
+            raise last_http_error
+
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Gemma routing did not find any compatible models for the request.",
+        )
+
+    def _resolve_model(self, payload: BaseGemmaRequest) -> str:
         """Choose the request model or fall back to the configured default."""
-        return payload.model or self.settings.gemini_default_model
+        if payload.model:
+            return self.model_router.normalize_model_name(payload.model)
+        return "gemma-3-27b-it"
 
-    def _resolve_max_output_tokens(self, payload: GenerateRequest) -> int:
+    async def _get_routing_candidates(self, payload: BaseGemmaRequest) -> list[str]:
+        """Return Gemma models in the order they should be attempted."""
+        preferred_model = self._resolve_model(payload) if payload.model else None
+        if not payload.allow_model_fallback:
+            return [preferred_model or self._resolve_model(payload)]
+
+        profile = payload.routing_profile
+        if isinstance(payload, ImageToTextRequest) and profile == "auto":
+            profile = "vision_text"
+        elif profile == "auto":
+            profile = self.model_router.resolve_profile(payload.model, payload.response_mime_type == "application/json")
+        return await self.model_router.get_candidates(profile, preferred_model)
+
+    def _resolve_max_output_tokens(self, payload: BaseGemmaRequest) -> int:
         """Clamp the requested output token budget to the server maximum."""
         requested = payload.max_output_tokens or self.settings.default_max_output_tokens
         return min(requested, self.settings.max_output_tokens_limit)
@@ -90,8 +158,8 @@ class GeminiService:
             f"{self.settings.gemini_api_version}/models/{model}:generateContent"
         )
 
-    def _build_request_body(self, payload: GenerateRequest) -> dict[str, Any]:
-        """Translate the API request model into a Gemini request payload."""
+    def _build_generation_config(self, payload: BaseGemmaRequest) -> dict[str, Any]:
+        """Translate shared generation options into Gemini generation config."""
         generation_config: dict[str, Any] = {
             "temperature": payload.temperature,
             "maxOutputTokens": self._resolve_max_output_tokens(payload),
@@ -99,7 +167,14 @@ class GeminiService:
         }
         if payload.response_json_schema is not None:
             generation_config["responseSchema"] = self._to_gemini_response_schema(payload.response_json_schema)
+        if payload.top_p is not None:
+            generation_config["topP"] = payload.top_p
+        if payload.top_k is not None:
+            generation_config["topK"] = payload.top_k
+        return generation_config
 
+    def _build_text_request_body(self, payload: TextToTextRequest) -> dict[str, Any]:
+        """Translate a text-to-text request into a Gemini request payload."""
         body: dict[str, Any] = {
             "contents": [
                 {
@@ -107,13 +182,36 @@ class GeminiService:
                     "parts": [{"text": payload.prompt}],
                 }
             ],
-            "generationConfig": generation_config,
+            "generationConfig": self._build_generation_config(payload),
         }
 
-        if payload.top_p is not None:
-            body["generationConfig"]["topP"] = payload.top_p
-        if payload.top_k is not None:
-            body["generationConfig"]["topK"] = payload.top_k
+        if payload.system_instruction:
+            body["systemInstruction"] = {
+                "role": "system",
+                "parts": [{"text": payload.system_instruction}],
+            }
+
+        return body
+
+    def _build_image_request_body(self, payload: ImageToTextRequest) -> dict[str, Any]:
+        """Translate an image-to-text request into a Gemini request payload."""
+        body: dict[str, Any] = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "inlineData": {
+                                "mimeType": payload.image_mime_type,
+                                "data": payload.image_base64,
+                            }
+                        },
+                        {"text": payload.prompt},
+                    ],
+                }
+            ],
+            "generationConfig": self._build_generation_config(payload),
+        }
         if payload.system_instruction:
             body["systemInstruction"] = {
                 "role": "system",
@@ -204,7 +302,6 @@ class GeminiService:
     def _should_retry_response(response: httpx.Response) -> bool:
         """Return whether an HTTP response should trigger a retry."""
         return response.status_code in {
-            status.HTTP_429_TOO_MANY_REQUESTS,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
             status.HTTP_502_BAD_GATEWAY,
             status.HTTP_503_SERVICE_UNAVAILABLE,

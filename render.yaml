@@ -18,7 +18,7 @@ services:
       - key: GEMINI_API_VERSION
         value: v1beta
       - key: GEMINI_DEFAULT_MODEL
-        value: gemini-2.5-flash
+        value: gemma-3-27b-it
       - key: REQUEST_TIMEOUT_SECONDS
         value: "30"
       - key: MAX_INPUT_CHARS
