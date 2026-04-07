@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: text-2-text-api
+    runtime: python
+    plan: starter
+    numInstances: 2
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers $WEB_CONCURRENCY
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_HOST
+        value: 0.0.0.0
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: GEMINI_BASE_URL
+        value: https://generativelanguage.googleapis.com
+      - key: GEMINI_API_VERSION
+        value: v1beta
+      - key: GEMINI_DEFAULT_MODEL
+        value: gemini-2.5-flash
+      - key: REQUEST_TIMEOUT_SECONDS
+        value: "30"
+      - key: MAX_INPUT_CHARS
+        value: "16000"
+      - key: MAX_OUTPUT_TOKENS_LIMIT
+        value: "2048"
+      - key: DEFAULT_MAX_OUTPUT_TOKENS
+        value: "512"
+      - key: MAX_CONCURRENT_PROVIDER_CALLS
+        value: "10"
+      - key: GEMINI_MAX_RETRIES
+        value: "2"
+      - key: GEMINI_RETRY_BASE_DELAY_SECONDS
+        value: "0.5"
+      - key: GEMINI_API_KEY
+        sync: false
