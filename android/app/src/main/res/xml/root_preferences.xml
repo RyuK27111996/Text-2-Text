@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <EditTextPreference
+        android:key="backend_url"
+        android:title="Backend URL"
+        android:summary="Base URL of your FastAPI server"
+        android:defaultValue="http://10.0.2.2:8000"
+        android:dialogTitle="Enter Backend URL"
+        android:inputType="textUri"
+        app:useSimpleSummaryProvider="true" />
+
+</PreferenceScreen>

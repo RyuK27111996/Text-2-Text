@@ -77,3 +77,65 @@ class ErrorResponse(BaseModel):
     """Standard error response payload."""
 
     detail: str
+
+
+# ---------------------------------------------------------------------------
+# Sales digitization schemas
+# ---------------------------------------------------------------------------
+
+class SaleItem(BaseModel):
+    """A single line item extracted from a handwritten sales record."""
+
+    description: str = Field(..., description="Item name or description as written")
+    quantity: float = Field(..., ge=0)
+    unit_price: float = Field(..., ge=0)
+    line_total: float = Field(..., ge=0)
+    currency: str | None = None
+    notes: str | None = None
+
+
+class SalesRecord(BaseModel):
+    """Full extraction result from one photographed page of sales records."""
+
+    date: str | None = None
+    seller: str | None = None
+    items: list[SaleItem] = Field(default_factory=list)
+    subtotal: float | None = Field(default=None, ge=0)
+    tax: float | None = Field(default=None, ge=0)
+    grand_total: float | None = Field(default=None, ge=0)
+    computed_total: float = Field(..., ge=0)
+    total_matches: bool
+    confidence: Literal["high", "medium", "low"]
+    warnings: list[str] = Field(default_factory=list)
+    raw_text: str | None = None
+
+
+class DigitizeResponse(BaseModel):
+    """Response returned by POST /v1/digitize."""
+
+    request_id: str
+    model: str
+    sales_record: SalesRecord
+    provider_latency_ms: float
+    total_latency_ms: float
+
+
+class ExportSheetsRequest(BaseModel):
+    """Request body for POST /v1/export-to-sheets."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sales_record: SalesRecord
+    sheet_id: str | None = Field(
+        default=None,
+        description="Existing Google Sheet ID to append to. If None, a new sheet is created.",
+    )
+    sheet_name: str = Field(default="Sales", description="Tab/worksheet name to write to")
+
+
+class ExportSheetsResponse(BaseModel):
+    """Response returned by POST /v1/export-to-sheets."""
+
+    sheet_url: str
+    sheet_id: str
+    rows_written: int
