@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     gemini_max_retries: int = 2
     gemini_retry_base_delay_seconds: float = 0.5
 
+    # Vision / digitization settings
+    gemini_vision_model: str = "gemini-2.0-flash"
+    max_image_bytes: int = 10 * 1024 * 1024  # 10 MB
+    vision_timeout_seconds: float = 90.0
+
+    # Google Sheets integration (optional — feature degrades gracefully when absent)
+    google_sheets_credentials_json: str | None = None
+    google_sheets_default_title: str = "Digitized Sales Records"
+
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["*"])
 
     model_config = SettingsConfigDict(

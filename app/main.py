@@ -6,12 +6,20 @@ import time
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.middleware.request_id import RequestContextMiddleware
-from app.schemas import ErrorResponse, GenerateRequest, GenerateResponse
+from app.schemas import (
+    DigitizeResponse,
+    ErrorResponse,
+    ExportSheetsRequest,
+    ExportSheetsResponse,
+    GenerateRequest,
+    GenerateResponse,
+)
+from app.services.digitizer import DigitizerService
 from app.services.gemini import GeminiService
 try:
     from app.services.ollama import OllamaService
@@ -153,4 +161,83 @@ async def generate(request: Request, payload: GenerateRequest):
         output_text=result.text,
         provider_latency_ms=round(result.provider_latency_ms, 2),
         total_latency_ms=round(total_latency_ms, 2),
+    )
+
+
+@app.post(
+    "/v1/digitize",
+    response_model=DigitizeResponse,
+    responses={
+        413: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        429: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        504: {"model": ErrorResponse},
+    },
+)
+async def digitize_sales(
+    request: Request,
+    image: UploadFile = File(..., description="Photo of handwritten sales records (JPEG/PNG/WEBP)"),
+):
+    """Accept an image of a handwritten sales page and return structured data."""
+    request_id = getattr(request.state, "request_id", "-")
+    log = RequestLoggerAdapter(logger, {"request_id": request_id})
+
+    image_bytes = await image.read()
+    mime_type = image.content_type or "image/jpeg"
+
+    log.info("Digitize request received", extra={"file_size": len(image_bytes), "mime_type": mime_type})
+
+    service = DigitizerService(
+        settings=request.app.state.settings,
+        client=request.app.state.http_client,
+        semaphore=request.app.state.provider_semaphore,
+    )
+
+    total_started = time.perf_counter()
+    result = await service.digitize(image_bytes, mime_type)
+    total_latency_ms = (time.perf_counter() - total_started) * 1000.0
+
+    log.info("Digitize request completed", extra={"confidence": result.sales_record.confidence})
+    return DigitizeResponse(
+        request_id=request_id,
+        model=result.model,
+        sales_record=result.sales_record,
+        provider_latency_ms=round(result.provider_latency_ms, 2),
+        total_latency_ms=round(total_latency_ms, 2),
+    )
+
+
+@app.post(
+    "/v1/export-to-sheets",
+    response_model=ExportSheetsResponse,
+    responses={
+        500: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+        503: {"model": ErrorResponse},
+    },
+)
+async def export_to_sheets(request: Request, payload: ExportSheetsRequest):
+    """Export a SalesRecord to Google Sheets. Returns the sheet URL."""
+    request_id = getattr(request.state, "request_id", "-")
+    log = RequestLoggerAdapter(logger, {"request_id": request_id})
+
+    try:
+        from app.services.sheets import SheetsService
+        service = SheetsService(settings=request.app.state.settings)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+
+    log.info("Export-to-sheets request received")
+    result = await service.export(
+        record=payload.sales_record,
+        sheet_id=payload.sheet_id,
+        sheet_name=payload.sheet_name,
+    )
+    log.info("Export-to-sheets completed", extra={"rows_written": result.rows_written})
+    return ExportSheetsResponse(
+        sheet_url=result.sheet_url,
+        sheet_id=result.sheet_id,
+        rows_written=result.rows_written,
     )
