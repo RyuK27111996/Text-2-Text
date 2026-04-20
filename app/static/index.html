@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sales Digitizer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #f0f4f8;
+      min-height: 100vh;
+      color: #1a202c;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #1976d2, #1565c0);
+      color: #fff;
+      padding: 0 24px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2);
+    }
+    header svg { flex-shrink: 0; }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header span { margin-left: auto; font-size: .8rem; opacity: .75; }
+
+    /* ── Layout ── */
+    main {
+      max-width: 900px;
+      margin: 32px auto;
+      padding: 0 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* ── Card ── */
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #e2e8f0;
+      font-weight: 600;
+      font-size: .95rem;
+      color: #2d3748;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-body { padding: 20px; }
+
+    /* ── Upload zone ── */
+    #drop-zone {
+      border: 2px dashed #cbd5e0;
+      border-radius: 10px;
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    #drop-zone.dragging {
+      border-color: #1976d2;
+      background: #ebf4ff;
+    }
+    #drop-zone:hover { border-color: #90cdf4; background: #f7fbff; }
+    #drop-zone input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    }
+    #drop-zone .icon { font-size: 3rem; margin-bottom: 10px; }
+    #drop-zone p { color: #718096; font-size: .9rem; }
+    #drop-zone p strong { color: #1976d2; }
+
+    /* ── Preview ── */
+    #preview-wrap { display: none; text-align: center; }
+    #preview-wrap img {
+      max-width: 100%;
+      max-height: 320px;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      object-fit: contain;
+    }
+    #file-name { font-size: .8rem; color: #718096; margin-top: 6px; }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 8px;
+      font-size: .9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn:active { transform: scale(.98); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-primary { background: #1976d2; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #1565c0; }
+    .btn-success { background: #38a169; color: #fff; }
+    .btn-success:hover:not(:disabled) { background: #2f855a; }
+    .btn-outline {
+      background: transparent; color: #1976d2;
+      border: 1.5px solid #1976d2;
+    }
+    .btn-outline:hover:not(:disabled) { background: #ebf4ff; }
+    .btn-row {
+      display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;
+    }
+
+    /* ── Spinner ── */
+    .spinner {
+      display: none;
+      width: 22px; height: 22px;
+      border: 3px solid #bee3f8;
+      border-top-color: #1976d2;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Confidence banner ── */
+    .confidence {
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-weight: 600;
+      font-size: .9rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .confidence.high   { background: #c6f6d5; color: #22543d; }
+    .confidence.medium { background: #fefcbf; color: #744210; }
+    .confidence.low    { background: #fed7d7; color: #742a2a; }
+
+    /* ── Mismatch warning ── */
+    .mismatch {
+      background: #fff5f5;
+      border: 1px solid #fc8181;
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: #c53030;
+      font-size: .85rem;
+      margin-bottom: 14px;
+      display: none;
+    }
+
+    /* ── Meta grid ── */
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .meta-item {
+      background: #f7fafc;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .meta-item label {
+      font-size: .72rem;
+      color: #718096;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .meta-item span {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #2d3748;
+    }
+
+    /* ── Items table ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .875rem;
+    }
+    thead th {
+      background: #edf2f7;
+      text-align: left;
+      padding: 10px 12px;
+      font-size: .78rem;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: #718096;
+    }
+    tbody tr:nth-child(even) { background: #f7fafc; }
+    tbody td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; }
+    tbody tr:last-child td { border-bottom: none; }
+    .total-row td {
+      font-weight: 700;
+      color: #2d3748;
+      background: #ebf8f0 !important;
+    }
+    .note-badge {
+      display: inline-block;
+      background: #fefcbf;
+      color: #744210;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: .75rem;
+      margin-top: 2px;
+    }
+
+    /* ── Warnings ── */
+    .warnings {
+      background: #fffaf0;
+      border: 1px solid #f6ad55;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-top: 16px;
+    }
+    .warnings h4 { color: #c05621; font-size: .85rem; margin-bottom: 6px; }
+    .warnings ul { padding-left: 18px; }
+    .warnings li { font-size: .82rem; color: #7b341e; margin-bottom: 2px; }
+
+    /* ── Latency ── */
+    .latency { font-size: .75rem; color: #a0aec0; margin-top: 10px; }
+
+    /* ── Result section ── */
+    #result-section { display: none; }
+
+    /* ── Empty state ── */
+    #empty-items {
+      text-align: center;
+      padding: 30px;
+      color: #a0aec0;
+      font-size: .9rem;
+    }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      bottom: 24px; right: 24px;
+      background: #2d3748;
+      color: #fff;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: .875rem;
+      box-shadow: 0 4px 16px rgba(0,0,0,.2);
+      transform: translateY(80px);
+      opacity: 0;
+      transition: transform .3s, opacity .3s;
+      z-index: 999;
+      max-width: 320px;
+    }
+    #toast.show { transform: translateY(0); opacity: 1; }
+    #toast.error { background: #c53030; }
+    #toast.success { background: #276749; }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      main { margin: 16px auto; }
+      .btn-row { flex-direction: column; }
+      .btn { width: 100%; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+    <polyline points="14 2 14 8 20 8"/>
+    <line x1="16" y1="13" x2="8" y2="13"/>
+    <line x1="16" y1="17" x2="8" y2="17"/>
+    <polyline points="10 9 9 9 8 9"/>
+  </svg>
+  <h1>Sales Digitizer</h1>
+  <span id="backend-label">Backend: localhost:8000</span>
+</header>
+
+<main>
+
+  <!-- Upload card -->
+  <div class="card">
+    <div class="card-header">
+      📷 Upload Sales Page Photo
+    </div>
+    <div class="card-body">
+      <div id="drop-zone">
+        <input type="file" id="file-input" accept="image/*" />
+        <div class="icon">🖼️</div>
+        <p><strong>Click to choose</strong> or drag &amp; drop an image here</p>
+        <p style="margin-top:6px">JPEG · PNG · WEBP · max 10 MB</p>
+      </div>
+
+      <div id="preview-wrap" style="margin-top:16px">
+        <img id="preview-img" src="" alt="Preview" />
+        <div id="file-name"></div>
+      </div>
+
+      <div class="btn-row">
+        <button id="btn-digitize" class="btn btn-primary" disabled>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          Digitize Image
+        </button>
+        <div class="spinner" id="spinner"></div>
+      </div>
+
+      <!-- Backend URL config -->
+      <details style="margin-top:20px">
+        <summary style="cursor:pointer;font-size:.85rem;color:#718096">⚙️ Backend Settings</summary>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+          <input id="backend-url" type="text" value="http://localhost:8000"
+            style="flex:1;padding:8px 12px;border:1px solid #cbd5e0;border-radius:6px;font-size:.9rem" />
+          <button class="btn btn-outline" onclick="saveBackend()">Save</button>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- Result card -->
+  <div class="card" id="result-section">
+    <div class="card-header">
+      📊 Extracted Sales Data
+      <span id="model-badge" style="margin-left:auto;font-size:.75rem;color:#718096;font-weight:400"></span>
+    </div>
+    <div class="card-body">
+
+      <div id="confidence-banner" class="confidence high">
+        <span id="confidence-icon">✅</span>
+        <span id="confidence-text">High Confidence</span>
+      </div>
+
+      <div id="mismatch-warning" class="mismatch"></div>
+
+      <div class="meta-grid">
+        <div class="meta-item">
+          <label>Date</label>
+          <span id="meta-date">—</span>
+        </div>
+        <div class="meta-item">
+          <label>Seller</label>
+          <span id="meta-seller">—</span>
+        </div>
+        <div class="meta-item">
+          <label>Items Found</label>
+          <span id="meta-items">0</span>
+        </div>
+        <div class="meta-item">
+          <label>Computed Total</label>
+          <span id="meta-total">0.00</span>
+        </div>
+      </div>
+
+      <div id="empty-items">No items detected in this image.</div>
+
+      <div id="table-wrap" style="overflow-x:auto;display:none">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Description</th>
+              <th>Qty</th>
+              <th>Unit Price</th>
+              <th>Line Total</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody id="items-tbody"></tbody>
+          <tfoot id="items-tfoot"></tfoot>
+        </table>
+      </div>
+
+      <div id="warnings-box" class="warnings" style="display:none">
+        <h4>⚠️ Warnings</h4>
+        <ul id="warnings-list"></ul>
+      </div>
+
+      <div class="latency" id="latency-info"></div>
+
+      <div class="btn-row" style="margin-top:20px">
+        <button id="btn-export" class="btn btn-success">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <polyline points="8 13 12 17 16 13"/>
+            <line x1="12" y1="17" x2="12" y2="7"/>
+          </svg>
+          Export to Google Sheets
+        </button>
+        <div class="spinner" id="export-spinner"></div>
+
+        <button class="btn btn-outline" onclick="copyJson()">
+          📋 Copy JSON
+        </button>
+
+        <button class="btn btn-outline" onclick="resetAll()">
+          🔄 New Image
+        </button>
+      </div>
+
+      <!-- Optional sheet ID -->
+      <details style="margin-top:16px">
+        <summary style="cursor:pointer;font-size:.85rem;color:#718096">📎 Append to existing sheet</summary>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <input id="sheet-id" type="text" placeholder="Google Sheet ID (leave blank to create new)"
+            style="flex:1;padding:8px 12px;border:1px solid #cbd5e0;border-radius:6px;font-size:.85rem" />
+        </div>
+      </details>
+    </div>
+  </div>
+
+</main>
+
+<!-- Toast notification -->
+<div id="toast"></div>
+
+<script>
+  let lastRecord = null;
+  let backendUrl = localStorage.getItem('backend_url') || 'http://localhost:8000';
+
+  document.getElementById('backend-url').value = backendUrl;
+  document.getElementById('backend-label').textContent = 'Backend: ' + backendUrl.replace(/^https?:\/\//, '');
+
+  function saveBackend() {
+    backendUrl = document.getElementById('backend-url').value.trimEnd('/');
+    localStorage.setItem('backend_url', backendUrl);
+    document.getElementById('backend-label').textContent = 'Backend: ' + backendUrl.replace(/^https?:\/\//, '');
+    toast('Backend URL saved', 'success');
+  }
+
+  // ── Drag & drop ──────────────────────────────────────────────────────
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragging'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragging'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragging');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) handleFile(fileInput.files[0]);
+  });
+
+  function handleFile(file) {
+    if (file.size > 10 * 1024 * 1024) {
+      toast('Image too large (max 10 MB)', 'error');
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    document.getElementById('preview-img').src = url;
+    document.getElementById('file-name').textContent = file.name + ' (' + (file.size / 1024).toFixed(0) + ' KB)';
+    document.getElementById('preview-wrap').style.display = 'block';
+    document.getElementById('drop-zone').style.display = 'none';
+    document.getElementById('btn-digitize').disabled = false;
+    document.getElementById('btn-digitize').onclick = () => digitize(file);
+    document.getElementById('result-section').style.display = 'none';
+  }
+
+  // ── Digitize ─────────────────────────────────────────────────────────
+  async function digitize(file) {
+    const spinner = document.getElementById('spinner');
+    const btn = document.getElementById('btn-digitize');
+    btn.disabled = true;
+    spinner.style.display = 'block';
+
+    const formData = new FormData();
+    formData.append('image', file);
+
+    try {
+      const res = await fetch(backendUrl + '/v1/digitize', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast(data.detail || 'Server error ' + res.status, 'error');
+        return;
+      }
+      lastRecord = data.sales_record;
+      renderResult(data);
+    } catch (e) {
+      toast('Network error: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = 'none';
+    }
+  }
+
+  // ── Render result ─────────────────────────────────────────────────────
+  function renderResult(data) {
+    const r = data.sales_record;
+    document.getElementById('result-section').style.display = 'block';
+    document.getElementById('model-badge').textContent = data.model;
+
+    // Confidence banner
+    const banner = document.getElementById('confidence-banner');
+    const icon = document.getElementById('confidence-icon');
+    const text = document.getElementById('confidence-text');
+    banner.className = 'confidence ' + r.confidence;
+    const conf = { high: ['✅', 'High Confidence'], medium: ['⚠️', 'Medium Confidence — Review Recommended'], low: ['🔴', 'Low Confidence — Manual Verification Required'] };
+    [icon.textContent, text.textContent] = conf[r.confidence] || conf.low;
+
+    // Mismatch
+    const mis = document.getElementById('mismatch-warning');
+    if (!r.total_matches && r.grand_total != null) {
+      mis.style.display = 'block';
+      mis.textContent = '⚠ Written total ' + r.grand_total + ' differs from computed ' + r.computed_total;
+    } else {
+      mis.style.display = 'none';
+    }
+
+    // Meta
+    document.getElementById('meta-date').textContent = r.date || '—';
+    document.getElementById('meta-seller').textContent = r.seller || '—';
+    document.getElementById('meta-items').textContent = r.items.length;
+    document.getElementById('meta-total').textContent = fmt(r.computed_total);
+
+    // Table
+    const tbody = document.getElementById('items-tbody');
+    const tfoot = document.getElementById('items-tfoot');
+    tbody.innerHTML = '';
+    tfoot.innerHTML = '';
+
+    if (r.items.length === 0) {
+      document.getElementById('empty-items').style.display = 'block';
+      document.getElementById('table-wrap').style.display = 'none';
+    } else {
+      document.getElementById('empty-items').style.display = 'none';
+      document.getElementById('table-wrap').style.display = 'block';
+
+      r.items.forEach((item, i) => {
+        const cur = item.currency || '';
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td style="color:#a0aec0">${i + 1}</td>
+          <td>
+            <strong>${esc(item.description)}</strong>
+            ${item.notes ? '<br><span class="note-badge">' + esc(item.notes) + '</span>' : ''}
+          </td>
+          <td>${item.quantity}</td>
+          <td>${cur}${fmt(item.unit_price)}</td>
+          <td><strong>${cur}${fmt(item.line_total)}</strong></td>
+          <td style="color:#718096;font-size:.8rem">${item.notes ? '📝' : ''}</td>
+        `;
+        tbody.appendChild(row);
+      });
+
+      // Footer totals
+      if (r.subtotal != null || r.tax != null || r.grand_total != null) {
+        const rows = [];
+        if (r.subtotal != null) rows.push(['Subtotal', r.subtotal]);
+        if (r.tax != null) rows.push(['Tax', r.tax]);
+        rows.push(['Grand Total (computed)', r.computed_total]);
+
+        rows.forEach(([label, val]) => {
+          const tr = document.createElement('tr');
+          tr.className = 'total-row';
+          tr.innerHTML = `<td colspan="4" style="text-align:right;padding-right:12px">${label}</td><td colspan="2">${fmt(val)}</td>`;
+          tfoot.appendChild(tr);
+        });
+      }
+    }
+
+    // Warnings
+    const wbox = document.getElementById('warnings-box');
+    const wlist = document.getElementById('warnings-list');
+    if (r.warnings && r.warnings.length > 0) {
+      wbox.style.display = 'block';
+      wlist.innerHTML = r.warnings.map(w => '<li>' + esc(w) + '</li>').join('');
+    } else {
+      wbox.style.display = 'none';
+    }
+
+    // Latency
+    document.getElementById('latency-info').textContent =
+      `Extracted in ${data.total_latency_ms.toFixed(0)} ms (Gemini: ${data.provider_latency_ms.toFixed(0)} ms)`;
+
+    document.getElementById('result-section').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  // ── Export to Sheets ─────────────────────────────────────────────────
+  document.getElementById('btn-export').addEventListener('click', async () => {
+    if (!lastRecord) return;
+    const btn = document.getElementById('btn-export');
+    const spinner = document.getElementById('export-spinner');
+    btn.disabled = true;
+    spinner.style.display = 'block';
+
+    const sheetId = document.getElementById('sheet-id').value.trim() || null;
+    try {
+      const res = await fetch(backendUrl + '/v1/export-to-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sales_record: lastRecord, sheet_id: sheetId, sheet_name: 'Sales' }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 503) {
+          toast('Google Sheets not configured on server. Set GOOGLE_SHEETS_CREDENTIALS_JSON.', 'error');
+        } else {
+          toast(data.detail || 'Export failed', 'error');
+        }
+        return;
+      }
+      document.getElementById('sheet-id').value = data.sheet_id;
+      toast(`✅ ${data.rows_written} rows written! Opening sheet…`, 'success');
+      setTimeout(() => window.open(data.sheet_url, '_blank'), 800);
+    } catch (e) {
+      toast('Network error: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = 'none';
+    }
+  });
+
+  // ── Helpers ───────────────────────────────────────────────────────────
+  function resetAll() {
+    lastRecord = null;
+    document.getElementById('drop-zone').style.display = 'block';
+    document.getElementById('preview-wrap').style.display = 'none';
+    document.getElementById('result-section').style.display = 'none';
+    document.getElementById('btn-digitize').disabled = true;
+    fileInput.value = '';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function copyJson() {
+    if (!lastRecord) return;
+    navigator.clipboard.writeText(JSON.stringify(lastRecord, null, 2))
+      .then(() => toast('JSON copied to clipboard', 'success'))
+      .catch(() => toast('Copy failed', 'error'));
+  }
+
+  function fmt(n) {
+    return typeof n === 'number' ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : n;
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  let toastTimer;
+  function toast(msg, type = '') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'show' + (type ? ' ' + type : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.className = '', 3500);
+  }
+</script>
+</body>
+</html>
